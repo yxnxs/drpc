@@ -40,8 +40,6 @@ RPC::IPCConnection::IPCConnection() {
 
     if (connect(descriptor, (sockaddr *)&addr, sizeof(addr)) < 0)
         throw std::runtime_error("Failed to connect to IPC Socket");
-
-    std::cout << "Connected successfully" << std::endl;
 }
 
 RPC::IPCConnection::~IPCConnection() { ::close(descriptor); }
@@ -50,22 +48,28 @@ bool RPC::IPCConnection::Write(const void *data, const size_t length) const {
     const auto sent = send(descriptor, data, length, 0);
     if (sent < 0)
         throw std::runtime_error("Failed to send data to IPC Socket");
-    return sent != (ssize_t)length;
+    return sent == static_cast<ssize_t>(length);
 }
 
 bool RPC::IPCConnection::Read(void *data, const size_t length) const {
-    const auto success = recv(descriptor, data, length, 0);
-    if (success <= 0)
+    const auto received = recv(descriptor, data, length, 0);
+    if (received <= 0) {
+        if (errno == EAGAIN)
+            return false;
         throw std::runtime_error("Failed to receive data from IPC Socket");
-    return success != (int)length;
+    }
+    return received == static_cast<int>(length);
 }
 
-RPC::IPCConnection &RPC::IPCConnection::get() {
-    static IPCConnection instance{};
+const RPC::IPCConnection &RPC::IPCConnection::get() {
+    const static IPCConnection instance{};
     return instance;
 }
 
-RPC::Client::Client() : connection(RPC::IPCConnection::get()) {}
+RPC::Client::Client(std::string client_id)
+    : connection(RPC::IPCConnection::get()), client_id(std::move(client_id)) {
+    // TODO AUTHENTICATE and AUTHORIZE here
+}
 
 bool RPC::Client::send(const std::string_view data, const OPCode code) const {
 
@@ -79,15 +83,49 @@ bool RPC::Client::send(const std::string_view data, const OPCode code) const {
     return connection.Write(&frame, s + sizeof(FrameHeader));
 }
 
-bool RPC::Client::recv(RPC::Frame &buffer) const {
+bool RPC::Client::recv(RPC::Response &response_buffer) const {
     if (state != RPC::State::Connected && state != RPC::State::SentHandshake)
         return false;
 
-    bool did_read {false};
+    Frame buffer{};
+    bool did_read{false};
+
     for (;;) {
         did_read = connection.Read(&buffer, sizeof(FrameHeader));
-        if (!did_read) {
-            
+        if (!did_read)
+            return false;
+
+        const auto length = buffer.header.frame_length;
+
+        if (length > 0) {
+            did_read = connection.Read(buffer.message, length);
+            if (!did_read) {
+                throw std::runtime_error(
+                    "Failed to read message into frame buffer");
+            }
+            buffer.message[length] = 0;
+        }
+
+        switch (buffer.header.frame_code) {
+        case RPC::OPCode::Close:
+            throw std::runtime_error("Connection closing");
+
+        case RPC::OPCode::Frame:
+            // TODO Parse frame into object here
+            return true;
+        case RPC::OPCode::Ping:
+            buffer.header.frame_code = RPC::OPCode::Pong;
+            if (!connection.Write(&buffer, buffer.header.frame_length +
+                                               sizeof(RPC::FrameHeader))) {
+                throw std::runtime_error("Failed to PONG");
+            }
+            break;
+
+        case RPC::OPCode::Pong:
+            break;
+        case RPC::OPCode::Handshake:
+        default:
+            throw std::runtime_error("Bad IPC frame");
         }
     }
 }

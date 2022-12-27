@@ -6,15 +6,15 @@
 namespace RPC {
 
 enum class OPCode : uint32_t {
-    Handshake = 0,
-    Frame = 1,
-    Close = 2,
-    Ping = 3,
-    Pong = 4,
+    Handshake,
+    Frame,
+    Close,
+    Ping,
+    Pong,
 };
 
 enum class State : uint32_t {
-    Disconnected = 0,
+    Disconnected,
     SentHandshake,
     AwaitingResponse,
     Connected,

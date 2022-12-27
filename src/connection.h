@@ -2,7 +2,7 @@
 #define DRPC__CONNECTION__H
 
 #include "constants.hpp"
-#include <filesystem>
+#include <string>
 
 namespace RPC {
 
@@ -20,7 +20,7 @@ class IPCConnection {
     bool Write(const void *data, const size_t length) const;
     bool Read(void *data, const size_t lenth) const;
 
-    static IPCConnection &get();
+    const static IPCConnection &get();
 };
 
 struct FrameHeader {
@@ -35,17 +35,21 @@ struct Frame {
     char message[FrameSize];
 };
 
+struct Response {};
+
 class Client {
     const IPCConnection &connection;
     State state{RPC::State::Disconnected};
 
+    std::string client_id{};
+
   public:
-    Client();
+    Client(std::string client_id);
 
     bool send(const std::string_view data,
               const OPCode code = OPCode::Handshake) const;
 
-    bool recv(Frame &buffer) const;
+    bool recv(Response &buffer) const;
 };
 
 }; // namespace RPC
